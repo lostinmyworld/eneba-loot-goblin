@@ -416,3 +416,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+EnebaLootGoblin/.env.local
+EnebaLootGoblin/sample_feed.csv
