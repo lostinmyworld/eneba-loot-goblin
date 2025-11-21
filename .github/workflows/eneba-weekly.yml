@@ -1,0 +1,28 @@
+name: Eneba weekly offers to Discord
+on:
+    schedule:
+    # Every week on Friday 16:00 UTC
+        - cron: "0 16 * * FRI"
+    workflow_dispatch: {}
+jobs:
+    weekly-offers:
+        runs-on: ubuntu-latest
+        env:
+            DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+            ENEBA_FEED_URL: ${{ secrets.ENEBA_FEED_URL }}
+            MIN_DISCOUNT: ${{ 40 }}
+            MAX_OFFERS: "3"
+        steps:
+            -   name: Checkout repo
+                uses: actions/checkout@v4
+            
+            -   name: Setup .NET
+                uses: actions/setup-dotnet@v4
+                with:
+                    dotnet-version: "8.0.x"
+            
+            -   name: Restore
+                run: dotnet restore EnebaLootGoblin/EnebaLootGoblin.csproj
+            
+            -   name: Run Eneba Loot Goblin
+                run: dotnet run --project EnebaLootGoblin/EnebaLootGoblin.csproj --configuration Release
