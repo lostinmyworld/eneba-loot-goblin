@@ -1,4 +1,2 @@
-title,price,original_price,image,deeplink
-Cyberpunk 2077,19.99,59.99,https://example.com/cp.jpg,https://eneba.com/?aff_id=XXX&cp
-Hades,5.00,25.00,https://example.com/hades.jpg,https://eneba.com/?aff_id=XXX&hades
-Some Small Discount,18.00,20.00,https://example.com/small.jpg,https://eneba.com/?aff_id=XXX&small
+﻿id, title, original_title, description, link, image_link, availability, price, google_product_category, brand, region, condition, identifier_exists
+"test_id","Title","Original Title","Description","link","image-link","in stock","5.55 EUR",1279,"Company",global,new,no

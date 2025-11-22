@@ -2,8 +2,8 @@
 
 internal record Offer(
     string Title,
-    double Price,
-    double OldPrice,
-    int Discount,
+    decimal Price,
     string ImageUrl,
-    string Url);
+    string Url,
+    bool IsAvailable,
+    int CategoryId);

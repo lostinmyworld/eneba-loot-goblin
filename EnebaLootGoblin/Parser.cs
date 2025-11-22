@@ -1,4 +1,6 @@
 ﻿using System.Globalization;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using CsvHelper;
 using CsvHelper.Configuration;
 
@@ -6,13 +8,36 @@ namespace EnebaLootGoblin;
 
 internal static class Parser
 {
-    private const string TitleField = "title";
+    private const string TitleField = "original_title";
     private const string PriceField = "price";
-    private const string OldPriceField = "original_price";
-    private const string ImageField = "image";
-    private const string UrlField = "deeplink";
+    private const string AvailabilityField = "availability";
+    private const string CategoryField = "google_product_category";
+    private const string RegionField = "region";
+    private const string ImageField = "image_link";
+    private const string UrlField = "link";
 
-    internal static List<Offer> ParseOffers(string csv, int minDiscount)
+    private const int GamesCategoryId = 1279;
+    private const bool IncludeDlc = false;
+    private const bool IncludeVr = false;
+
+    private static readonly HashSet<string> _acceptableRegions =
+    [
+        "europe",
+        "global",
+    ];
+
+    private static readonly CsvConfiguration _csvConfig = new(CultureInfo.InvariantCulture)
+    {
+        HasHeaderRecord = true,
+        IgnoreBlankLines = true,
+        TrimOptions = TrimOptions.Trim,
+        PrepareHeaderForMatch = args => args.Header?.Trim() ?? string.Empty,
+    };
+
+    internal static List<Offer> ParseOffers(
+        string csv,
+        decimal minPrice,
+        int maxOffers)
     {
         var offers = new List<Offer>();
 
@@ -22,15 +47,8 @@ internal static class Parser
         }
 
         using var reader = new StringReader(csv);
-        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
-        {
-            HasHeaderRecord = true,
-            IgnoreBlankLines = true,
-            TrimOptions = TrimOptions.Trim,
-            PrepareHeaderForMatch = args => args.Header?.Trim() ?? string.Empty,
-        };
+        using var csvReader = new CsvReader(reader, _csvConfig);
 
-        using var csvReader = new CsvReader(reader, config);
         try
         {
             if (!csvReader.Read() || !csvReader.ReadHeader())
@@ -38,11 +56,10 @@ internal static class Parser
                 return offers;
             }
 
-            var headers = csvReader.Context.Reader?.HeaderRecord ?? [];
+            var headers = csvReader.Context.Reader?.HeaderRecord ?? Array.Empty<string>();
             var hasTitle = Array.Exists(headers, h => h.Equals(TitleField, StringComparison.OrdinalIgnoreCase));
             var hasPrice = Array.Exists(headers, h => h.Equals(PriceField, StringComparison.OrdinalIgnoreCase));
-            var hasOldPrice = Array.Exists(headers, h => h.Equals(OldPriceField, StringComparison.OrdinalIgnoreCase));
-            if (!hasTitle || !hasPrice || !hasOldPrice)
+            if (!hasTitle || !hasPrice)
             {
                 Console.WriteLine("CSV header is missing required fields.");
                 return offers;
@@ -51,21 +68,29 @@ internal static class Parser
             while (csvReader.Read())
             {
                 var title = csvReader.GetField(TitleField)?.Trim() ?? string.Empty;
-                var priceStr = (csvReader.GetField(PriceField)?.Trim() ?? string.Empty)
-                    .Replace(",", ".");
-                var oldPriceStr = (csvReader.GetField(OldPriceField)?.Trim() ?? string.Empty)
-                    .Replace(",", ".");
+                var rawPrice = csvReader.GetField(PriceField)?.Trim() ?? string.Empty;
+                var region = csvReader.GetField(RegionField)?.Trim().ToLowerInvariant() ?? string.Empty;
 
-                if (!double.TryParse(priceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var price)
-                    || !double.TryParse(oldPriceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var oldPrice)
-                    || oldPrice <= 0
-                    || price <= 0)
-                {
-                    continue;
-                }
+                // Extract first numeric token (handles "5.27 EUR", "EUR 5,27", "€5,27", etc.)
+                var match = Regex.Match(rawPrice, @"[-+]?\d+([.,]\d+)?");
+                var priceStr = match.Success
+                    ? match.Value.Replace(",", ".")
+                    : string.Empty;
 
-                var discount = (int)Math.Round((oldPrice - price) / oldPrice * 100);
-                if (discount < minDiscount)
+                var categoryStr = csvReader.GetField(CategoryField)?.Trim() ?? string.Empty;
+
+                var availabilityStr = csvReader.GetField(AvailabilityField)?.Trim().ToLowerInvariant() ?? string.Empty;
+                var isAvailable = availabilityStr == "in stock";
+
+                if (!decimal.TryParse(priceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var price)
+                    || price <= 0
+                    || price > minPrice
+                    || !int.TryParse(categoryStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var categoryId)
+                    || categoryId != GamesCategoryId
+                    || !isAvailable
+                    || (!IncludeDlc && title.Contains("(DLC)")
+                    || (!IncludeVr && title.Contains(" VR")))
+                    || _acceptableRegions.Contains(region))
                 {
                     continue;
                 }
@@ -80,10 +105,10 @@ internal static class Parser
                 offers.Add(new Offer(
                     title,
                     price,
-                    oldPrice,
-                    discount,
                     imageUrl,
-                    url));
+                    url,
+                    isAvailable,
+                    categoryId));
             }
         }
         catch (HeaderValidationException ex)
@@ -91,6 +116,33 @@ internal static class Parser
             Console.WriteLine($"CSV header validation failed. Exception: {ex.Message}");
         }
 
-        return offers;
+        return FilterRandomOffers(offers, maxOffers);
+    }
+
+    private static List<Offer> FilterRandomOffers(List<Offer> offers, int maxOffers)
+    {
+        var count = Math.Min(maxOffers, offers.Count);
+        if (count == 0)
+        {
+            return [];
+        }
+
+        var tmpOffers = offers.ToArray();
+
+        // Partial Fisher–Yates: for i in [0, count), pick j in [i, n) and swap
+        for (int i = 0; i < count; i++)
+        {
+            int j = RandomNumberGenerator.GetInt32(i, offers.Count);
+            (tmpOffers[i], tmpOffers[j]) = (tmpOffers[j], tmpOffers[i]);
+        }
+
+        var randomOffers = new List<Offer>(count);
+        for (int i = 0; i < count; i++)
+        {
+            randomOffers.Add(tmpOffers[i]);
+        }
+
+        return randomOffers.OrderBy(offer => offer.Price)
+            .ToList();
     }
 }
