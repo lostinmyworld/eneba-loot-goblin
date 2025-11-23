@@ -19,11 +19,6 @@ var maxOffers = int.TryParse(Environment.GetEnvironmentVariable("MAX_OFFERS"), o
     ? maxOffersValue
     : 3;
 
-Console.WriteLine("ENEBA_FEED_URL = " + Environment.GetEnvironmentVariable("ENEBA_FEED_URL"));
-Console.WriteLine("DISCORD_WEBHOOK_URL = " + Environment.GetEnvironmentVariable("DISCORD_WEBHOOK_URL"));
-Console.WriteLine("MIN_PRICE = " + Environment.GetEnvironmentVariable("MIN_PRICE"));
-Console.WriteLine("MAX_OFFERS = " + Environment.GetEnvironmentVariable("MAX_OFFERS"));
-
 try
 {
     Console.WriteLine("Downloading feed...");
