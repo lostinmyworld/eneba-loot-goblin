@@ -10,7 +10,7 @@ jobs:
         env:
             DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
             ENEBA_FEED_URL: ${{ secrets.ENEBA_FEED_URL }}
-            MIN_PRICE: ${{ secrets.MIN_PRICE }}
+            MIN_PRICE: ${{ secrets.MAX_PRICE }}
             MAX_OFFERS: ${{ secrets.MAX_OFFERS }}
         steps:
             -   name: Checkout repo

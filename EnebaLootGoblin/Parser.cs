@@ -3,10 +3,11 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using CsvHelper;
 using CsvHelper.Configuration;
+using EnebaLootGoblin.Models;
 
 namespace EnebaLootGoblin;
 
-internal static class Parser
+public class Parser
 {
     private const string TitleField = "original_title";
     private const string PriceField = "price";
@@ -34,10 +35,39 @@ internal static class Parser
         PrepareHeaderForMatch = args => args.Header?.Trim() ?? string.Empty,
     };
 
-    internal static List<Offer> ParseOffers(
-        string csv,
-        decimal minPrice,
-        int maxOffers)
+    private readonly EnvironmentVariables _environmentVariables;
+
+    public Parser()
+    {
+        LoadLocalEnv(".env.local");
+
+        var enebaFeedUrl = Environment.GetEnvironmentVariable("ENEBA_FEED_URL")
+            ?? throw new InvalidOperationException("'ENEBA_FEED_URL' is not set.");
+
+        var discordWebhookUrl = Environment.GetEnvironmentVariable("DISCORD_WEBHOOK_URL")
+            ?? throw new InvalidOperationException("'DISCORD_WEBHOOK_URL' is not set.");
+
+        var maxPrice = decimal.TryParse(Environment.GetEnvironmentVariable("MAX_PRICE"), out var minPriceValue)
+            ? minPriceValue
+            : 20;
+
+        var maxOffers = int.TryParse(Environment.GetEnvironmentVariable("MAX_OFFERS"), out var maxOffersValue)
+            ? maxOffersValue
+            : 3;
+
+        _environmentVariables = new EnvironmentVariables(
+            enebaFeedUrl,
+            discordWebhookUrl,
+            maxPrice,
+            maxOffers);
+    }
+
+    public EnvironmentVariables GetEnvironmentVariables()
+    {
+        return _environmentVariables;
+    }
+
+    public List<Offer> ParseOffers(string csv)
     {
         var offers = new List<Offer>();
 
@@ -84,7 +114,7 @@ internal static class Parser
 
                 if (!decimal.TryParse(priceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var price)
                     || price <= 0
-                    || price > minPrice
+                    || price > _environmentVariables.MaxPrice
                     || !int.TryParse(categoryStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var categoryId)
                     || categoryId != GamesCategoryId
                     || !isAvailable
@@ -113,15 +143,51 @@ internal static class Parser
         }
         catch (HeaderValidationException ex)
         {
-            Console.WriteLine($"CSV header validation failed. Exception: {ex.Message}");
+            Console.Error.WriteLine($"CSV header validation failed. Exception: {ex.Message}");
         }
 
-        return FilterRandomOffers(offers, maxOffers);
+        return FilterRandomOffers(offers);
     }
 
-    private static List<Offer> FilterRandomOffers(List<Offer> offers, int maxOffers)
+    public DiscordRequest BuildDiscordRequest(List<Offer> offers)
     {
-        var count = Math.Min(maxOffers, offers.Count);
+        var lines = new List<string>();
+
+        foreach (var offer in offers)
+        {
+            var line = $"- **{offer.Title}**: {offer.Price:F2} €";
+
+            if (!string.IsNullOrWhiteSpace(offer.Url))
+            {
+                line += $"-- [Πάτα ΕΔΩ]({offer.Url})";
+            }
+
+            lines.Add(line);
+        }
+
+        var description = string.Join("\n", lines);
+        var imageUrl = offers.LastOrDefault(offer => !string.IsNullOrWhiteSpace(offer.ImageUrl))?.ImageUrl;
+
+        var embed = new Dictionary<string, object?>
+        {
+            ["title"] = $"Χαμηλές τιμές στην Eneba - κάτω των {_environmentVariables.MaxPrice} €",
+            ["description"] = description,
+        };
+
+        if (!string.IsNullOrWhiteSpace(imageUrl))
+        {
+            embed["image"] = new { url = imageUrl };
+        }
+
+        return new()
+        {
+            Embeds = [embed],
+        };
+    }
+
+    private List<Offer> FilterRandomOffers(List<Offer> offers)
+    {
+        var count = Math.Min(_environmentVariables.MaxOffers, offers.Count);
         if (count == 0)
         {
             return [];
@@ -144,5 +210,42 @@ internal static class Parser
 
         return randomOffers.OrderBy(offer => offer.Price)
             .ToList();
+    }
+
+    private static void LoadLocalEnv(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+                return;
+
+            Console.WriteLine($"Loading local env from {path}...");
+            var lines = File.ReadAllLines(path);
+
+            foreach (var raw in lines)
+            {
+                var line = raw.Trim();
+                if (string.IsNullOrWhiteSpace(line)
+                    || line.StartsWith('#'))
+                {
+                    continue;
+                }
+
+                var idx = line.IndexOf('=', StringComparison.Ordinal);
+                if (idx <= 0)
+                {
+                    continue;
+                }
+
+                var key = line[..idx].Trim();
+                var value = line[(idx + 1)..].Trim();
+
+                Environment.SetEnvironmentVariable(key, value);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Failed to load .env.local: " + ex.Message);
+        }
     }
 }

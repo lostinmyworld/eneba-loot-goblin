@@ -1,54 +1,31 @@
-﻿using System.Net.Mime;
-using System.Text;
-using EnebaLootGoblin;
+﻿using EnebaLootGoblin;
 using File = System.IO.File;
 
-ClientHelper.LoadLocalEnv(".env.local");
+var parser = new Parser();
 
-var feedUrl = Environment.GetEnvironmentVariable("ENEBA_FEED_URL")
-    ?? throw new InvalidOperationException("'ENEBA_FEED_URL' is not set.");
+var environmentVariables = parser.GetEnvironmentVariables();
 
-var webhookUrl = Environment.GetEnvironmentVariable("DISCORD_WEBHOOK_URL")
-    ?? throw new InvalidOperationException("'DISCORD_WEBHOOK_URL' is not set.");
-
-var minPrice = decimal.TryParse(Environment.GetEnvironmentVariable("MIN_PRICE"), out var minPriceValue)
-    ? minPriceValue
-    : 20;
-
-var maxOffers = int.TryParse(Environment.GetEnvironmentVariable("MAX_OFFERS"), out var maxOffersValue)
-    ? maxOffersValue
-    : 3;
+var apiClient = new ApiClient(environmentVariables);
 
 try
 {
     Console.WriteLine("Downloading feed...");
 
-    string csv = feedUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-        ? await ClientHelper.RetrieveCsvAsync(feedUrl)
-        : await File.ReadAllTextAsync(feedUrl);
+    string csv = environmentVariables.EnebaFeedUrl!.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+        ? await apiClient.RetrieveCsvAsync()
+        : await File.ReadAllTextAsync(environmentVariables.EnebaFeedUrl);
 
-    var offers = Parser.ParseOffers(csv, minPrice, maxOffers);
+    var offers = parser.ParseOffers(csv);
     if (offers.Count == 0)
     {
         Console.WriteLine("No offers found with the specified discount.");
         return;
     }
 
-    var payloadJson = DiscordBuilder.BuildDiscordPayload(offers, minPrice);
+    var discordRequest = parser.BuildDiscordRequest(offers);
+    await apiClient.SendToDiscordAsync(discordRequest);
 
-    Console.WriteLine("Posting to Discord...");
-
-    var content = new StringContent(
-        payloadJson,
-        Encoding.UTF8,
-        MediaTypeNames.Application.Json);
-    using var discordClient = new HttpClient();
-
-    var discordResponse = await discordClient.PostAsync(
-        webhookUrl,
-        content);
-
-    Console.WriteLine($"Discord response: {(int)discordResponse.StatusCode} {discordResponse.StatusCode}");
+    Console.WriteLine("Finished.");
 }
 catch (Exception ex)
 {

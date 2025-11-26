@@ -1,6 +1,6 @@
-﻿namespace EnebaLootGoblin;
+﻿namespace EnebaLootGoblin.Models;
 
-internal record Offer(
+public record Offer(
     string Title,
     decimal Price,
     string ImageUrl,
