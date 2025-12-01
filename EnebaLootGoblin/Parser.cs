@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using CsvHelper;
 using CsvHelper.Configuration;
 using EnebaLootGoblin.Models;
+using SocialModels;
 
 namespace EnebaLootGoblin;
 

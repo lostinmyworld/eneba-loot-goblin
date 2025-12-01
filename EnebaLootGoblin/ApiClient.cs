@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EnebaLootGoblin.Models;
+using SocialModels;
 
 namespace EnebaLootGoblin;
 
