@@ -4,11 +4,13 @@ using System.Text.RegularExpressions;
 using CsvHelper;
 using CsvHelper.Configuration;
 using EnebaLootGoblin.Models;
-using SocialModels;
+using Social.Models.Discord;
+using Social.Oversharers.Abstractions;
+using IParser = EnebaLootGoblin.Abstractions.IParser;
 
 namespace EnebaLootGoblin;
 
-public class Parser
+public class Parser : IParser
 {
     private const string TitleField = "original_title";
     private const string PriceField = "price";
@@ -38,29 +40,11 @@ public class Parser
 
     private readonly EnvironmentVariables _environmentVariables;
 
-    public Parser()
+    public Parser(IEnvironmentLoader environmentLoader)
     {
-        LoadLocalEnv(".env.local");
+        ArgumentNullException.ThrowIfNull(environmentLoader);
 
-        var enebaFeedUrl = Environment.GetEnvironmentVariable("ENEBA_FEED_URL")
-            ?? throw new InvalidOperationException("'ENEBA_FEED_URL' is not set.");
-
-        var discordWebhookUrl = Environment.GetEnvironmentVariable("DISCORD_WEBHOOK_URL")
-            ?? throw new InvalidOperationException("'DISCORD_WEBHOOK_URL' is not set.");
-
-        var maxPrice = decimal.TryParse(Environment.GetEnvironmentVariable("MAX_PRICE"), out var minPriceValue)
-            ? minPriceValue
-            : 20;
-
-        var maxOffers = int.TryParse(Environment.GetEnvironmentVariable("MAX_OFFERS"), out var maxOffersValue)
-            ? maxOffersValue
-            : 3;
-
-        _environmentVariables = new EnvironmentVariables(
-            enebaFeedUrl,
-            discordWebhookUrl,
-            maxPrice,
-            maxOffers);
+        _environmentVariables = LoadEnvironmentVariables();
     }
 
     public EnvironmentVariables GetEnvironmentVariables()
@@ -70,11 +54,9 @@ public class Parser
 
     public List<Offer> ParseOffers(string csv)
     {
-        var offers = new List<Offer>();
-
         if (string.IsNullOrWhiteSpace(csv))
         {
-            return offers;
+            return [];
         }
 
         using var reader = new StringReader(csv);
@@ -82,19 +64,15 @@ public class Parser
 
         try
         {
-            if (!csvReader.Read() || !csvReader.ReadHeader())
-            {
-                return offers;
-            }
-
-            var headers = csvReader.Context.Reader?.HeaderRecord ?? Array.Empty<string>();
-            var hasTitle = Array.Exists(headers, h => h.Equals(TitleField, StringComparison.OrdinalIgnoreCase));
-            var hasPrice = Array.Exists(headers, h => h.Equals(PriceField, StringComparison.OrdinalIgnoreCase));
-            if (!hasTitle || !hasPrice)
+            var areCsvHeadersValid = AreCsvHeadersValid(csvReader);
+            if (!areCsvHeadersValid)
             {
                 Console.WriteLine("CSV header is missing required fields.");
-                return offers;
+
+                return [];
             }
+
+            var offers = new List<Offer>();
 
             while (csvReader.Read())
             {
@@ -141,13 +119,15 @@ public class Parser
                     isAvailable,
                     categoryId));
             }
+
+            return FilterRandomOffers(offers);
         }
         catch (HeaderValidationException ex)
         {
             Console.Error.WriteLine($"CSV header validation failed. Exception: {ex.Message}");
         }
 
-        return FilterRandomOffers(offers);
+        return [];
     }
 
     public DiscordRequest BuildDiscordRequest(List<Offer> offers)
@@ -186,6 +166,29 @@ public class Parser
         };
     }
 
+    private static EnvironmentVariables LoadEnvironmentVariables()
+    {
+        var enebaFeedUrl = Environment.GetEnvironmentVariable("ENEBA_FEED_URL")
+            ?? throw new InvalidOperationException("'ENEBA_FEED_URL' is not set.");
+
+        var discordWebhookUrl = Environment.GetEnvironmentVariable("DISCORD_WEBHOOK_URL")
+            ?? throw new InvalidOperationException("'DISCORD_WEBHOOK_URL' is not set.");
+
+        var maxPrice = decimal.TryParse(Environment.GetEnvironmentVariable("MAX_PRICE"), out var minPriceValue)
+            ? minPriceValue
+            : 20;
+
+        var maxOffers = int.TryParse(Environment.GetEnvironmentVariable("MAX_OFFERS"), out var maxOffersValue)
+            ? maxOffersValue
+            : 3;
+
+        return new(
+            enebaFeedUrl,
+            discordWebhookUrl,
+            maxPrice,
+            maxOffers);
+    }
+
     private List<Offer> FilterRandomOffers(List<Offer> offers)
     {
         var count = Math.Min(_environmentVariables.MaxOffers, offers.Count);
@@ -213,40 +216,17 @@ public class Parser
             .ToList();
     }
 
-    private static void LoadLocalEnv(string path)
+    private static bool AreCsvHeadersValid(CsvReader csvReader)
     {
-        try
+        if (!csvReader.Read() || !csvReader.ReadHeader())
         {
-            if (!File.Exists(path))
-                return;
-
-            Console.WriteLine($"Loading local env from {path}...");
-            var lines = File.ReadAllLines(path);
-
-            foreach (var raw in lines)
-            {
-                var line = raw.Trim();
-                if (string.IsNullOrWhiteSpace(line)
-                    || line.StartsWith('#'))
-                {
-                    continue;
-                }
-
-                var idx = line.IndexOf('=', StringComparison.Ordinal);
-                if (idx <= 0)
-                {
-                    continue;
-                }
-
-                var key = line[..idx].Trim();
-                var value = line[(idx + 1)..].Trim();
-
-                Environment.SetEnvironmentVariable(key, value);
-            }
+            return false;
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Failed to load .env.local: " + ex.Message);
-        }
+
+        var headers = csvReader.Context.Reader?.HeaderRecord ?? [];
+        var hasTitle = Array.Exists(headers, h => h.Equals(TitleField, StringComparison.OrdinalIgnoreCase));
+        var hasPrice = Array.Exists(headers, h => h.Equals(PriceField, StringComparison.OrdinalIgnoreCase));
+
+        return hasTitle && hasPrice;
     }
 }

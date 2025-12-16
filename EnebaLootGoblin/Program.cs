@@ -1,19 +1,28 @@
-﻿using EnebaLootGoblin;
-using File = System.IO.File;
+﻿using EnebaLootGoblin.Abstractions;
+using EnebaLootGoblin.Extensions;
+using Microsoft.Extensions.DependencyInjection;
+using Social.Oversharers.Abstractions;
 
-var parser = new Parser();
+var services = new ServiceCollection();
 
-var environmentVariables = parser.GetEnvironmentVariables();
+services.AddDependencies();
 
-var apiClient = new ApiClient(environmentVariables);
+var serviceProvider = services.BuildServiceProvider();
+
+var parser = serviceProvider.GetRequiredService<IParser>();
+
+var environmentVars = parser.GetEnvironmentVariables();
+
+
+var apiClient = serviceProvider.GetRequiredService<IApiClient>();
+
+var discordSharer = serviceProvider.GetRequiredService<IDiscordSharer>();
 
 try
 {
     Console.WriteLine("Downloading feed...");
 
-    string csv = environmentVariables.EnebaFeedUrl!.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-        ? await apiClient.RetrieveCsvAsync()
-        : await File.ReadAllTextAsync(environmentVariables.EnebaFeedUrl);
+    string csv = await apiClient.RetrieveCsv(environmentVars.EnebaFeedUrl!);
 
     var offers = parser.ParseOffers(csv);
     if (offers.Count == 0)
@@ -23,7 +32,7 @@ try
     }
 
     var discordRequest = parser.BuildDiscordRequest(offers);
-    await apiClient.SendToDiscordAsync(discordRequest);
+    await discordSharer.SendToDiscord(discordRequest, environmentVars.DiscordWebHook!);
 
     Console.WriteLine("Finished.");
 }
