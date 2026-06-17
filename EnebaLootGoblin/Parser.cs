@@ -92,14 +92,18 @@ public class Parser : IParser
                 var isAvailable = availabilityStr == "in stock";
 
                 if (!decimal.TryParse(priceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var price)
-                    || price <= 0
+                    || price <= 5
                     || price > _environmentVariables.MaxPrice
                     || !int.TryParse(categoryStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var categoryId)
                     || categoryId != GamesCategoryId
                     || !isAvailable
-                    || (!IncludeDlc && title.Contains("(DLC)")
-                    || (!IncludeVr && title.Contains(" VR")))
-                    || _acceptableRegions.Contains(region))
+                    || (!IncludeDlc && title.Contains("(DLC)", StringComparison.OrdinalIgnoreCase)
+                        || (!IncludeVr && title.Contains(" VR", StringComparison.OrdinalIgnoreCase)))
+                    || !_acceptableRegions.Contains(region)
+                    || title.Contains("xbox", StringComparison.OrdinalIgnoreCase)
+                    || title.Contains("gift card", StringComparison.OrdinalIgnoreCase)
+                    || title.Contains("crypto", StringComparison.OrdinalIgnoreCase)
+                    || title.Contains("Nintendo Switch", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
