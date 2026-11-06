@@ -12,6 +12,7 @@ namespace EnebaLootGoblin;
 
 public class Parser : IParser
 {
+    private const string IdField = "id";
     private const string TitleField = "original_title";
     private const string PriceField = "price";
     private const string AvailabilityField = "availability";
@@ -29,6 +30,33 @@ public class Parser : IParser
         "europe",
         "global",
     ];
+
+    private static readonly HashSet<string> _pcStores =
+    [
+        "steam",
+        "gog",
+        "epic",
+        "origin",
+        "ea",
+        "uplay",
+        "ubisoft",
+        "bethesda",
+        "blizzard",
+        "rockstar",
+    ];
+
+    private static readonly HashSet<string> _consoleIdTokens =
+    [
+        "xbox",
+        "psn",
+        "ps4",
+        "ps5",
+        "nintendo",
+    ];
+
+    private static readonly Regex _softwareTitleRegex = new(
+        @"\bantivirus\b|\bvpn\b|\b\d+\s+devices?\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly CsvConfiguration _csvConfig = new(CultureInfo.InvariantCulture)
     {
@@ -76,34 +104,21 @@ public class Parser : IParser
 
             while (csvReader.Read())
             {
+                var id = csvReader.GetField(IdField)?.Trim().ToLowerInvariant() ?? string.Empty;
                 var title = csvReader.GetField(TitleField)?.Trim() ?? string.Empty;
                 var rawPrice = csvReader.GetField(PriceField)?.Trim() ?? string.Empty;
                 var region = csvReader.GetField(RegionField)?.Trim().ToLowerInvariant() ?? string.Empty;
-
-                // Extract first numeric token (handles "5.27 EUR", "EUR 5,27", "€5,27", etc.)
-                var match = Regex.Match(rawPrice, @"[-+]?\d+([.,]\d+)?");
-                var priceStr = match.Success
-                    ? match.Value.Replace(",", ".")
-                    : string.Empty;
-
                 var categoryStr = csvReader.GetField(CategoryField)?.Trim() ?? string.Empty;
 
                 var availabilityStr = csvReader.GetField(AvailabilityField)?.Trim().ToLowerInvariant() ?? string.Empty;
                 var isAvailable = availabilityStr == "in stock";
 
-                if (!decimal.TryParse(priceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var price)
-                    || price <= 5
-                    || price > _environmentVariables.MaxPrice
-                    || !int.TryParse(categoryStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var categoryId)
-                    || categoryId != GamesCategoryId
+                if (!TryParsePrice(rawPrice, out var price)
+                    || !IsWithinPriceRange(price)
+                    || !IsGameCategory(categoryStr, out var categoryId)
                     || !isAvailable
-                    || (!IncludeDlc && title.Contains("(DLC)", StringComparison.OrdinalIgnoreCase)
-                        || (!IncludeVr && title.Contains(" VR", StringComparison.OrdinalIgnoreCase)))
                     || !_acceptableRegions.Contains(region)
-                    || title.Contains("xbox", StringComparison.OrdinalIgnoreCase)
-                    || title.Contains("gift card", StringComparison.OrdinalIgnoreCase)
-                    || title.Contains("crypto", StringComparison.OrdinalIgnoreCase)
-                    || title.Contains("Nintendo Switch", StringComparison.OrdinalIgnoreCase))
+                    || !IsWantedProduct(id, title))
                 {
                     continue;
                 }
@@ -218,6 +233,81 @@ public class Parser : IParser
 
         return randomOffers.OrderBy(offer => offer.Price)
             .ToList();
+    }
+
+    private static bool TryParsePrice(string rawPrice, out decimal price)
+    {
+        // Extract first numeric token (handles "5.27 EUR", "EUR 5,27", "€5,27", etc.)
+        var match = Regex.Match(rawPrice, @"[-+]?\d+([.,]\d+)?");
+        var priceStr = match.Success
+            ? match.Value.Replace(",", ".")
+            : string.Empty;
+
+        return decimal.TryParse(priceStr, NumberStyles.Any, CultureInfo.InvariantCulture, out price);
+    }
+
+    private bool IsWithinPriceRange(decimal price)
+    {
+        return price > 5 && price <= _environmentVariables.MaxPrice;
+    }
+
+    private static bool IsGameCategory(string categoryStr, out int categoryId)
+    {
+        return int.TryParse(categoryStr, NumberStyles.Any, CultureInfo.InvariantCulture, out categoryId)
+            && categoryId == GamesCategoryId;
+    }
+
+    private static bool IsWantedProduct(string id, string title)
+    {
+        var idTokens = id.Split('-', StringSplitOptions.RemoveEmptyEntries);
+
+        return IsPcStore(idTokens)
+            && !IsConsoleKey(idTokens)
+            && !IsMacOnly(idTokens)
+            && (IncludeDlc || !IsDlc(id, idTokens, title))
+            && (IncludeVr || !IsVr(idTokens, title))
+            && !IsSoftware(title)
+            && !IsVoucher(title);
+    }
+
+    private static bool IsPcStore(string[] idTokens)
+    {
+        return idTokens.Length > 0 && _pcStores.Contains(idTokens[0]);
+    }
+
+    private static bool IsConsoleKey(string[] idTokens)
+    {
+        return idTokens.Any(_consoleIdTokens.Contains);
+    }
+
+    private static bool IsMacOnly(string[] idTokens)
+    {
+        return idTokens.Contains("mac") && !idTokens.Contains("pc");
+    }
+
+    private static bool IsDlc(string id, string[] idTokens, string title)
+    {
+        return idTokens.Contains("dlc")
+            || id.Contains("expansion-pack", StringComparison.Ordinal)
+            || title.Contains("(DLC)", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsVr(string[] idTokens, string title)
+    {
+        return idTokens.Contains("vr")
+            || title.Contains("[VR]", StringComparison.OrdinalIgnoreCase)
+            || title.Contains(" VR", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSoftware(string title)
+    {
+        return _softwareTitleRegex.IsMatch(title);
+    }
+
+    private static bool IsVoucher(string title)
+    {
+        return title.Contains("gift card", StringComparison.OrdinalIgnoreCase)
+            || title.Contains("crypto", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool AreCsvHeadersValid(CsvReader csvReader)
